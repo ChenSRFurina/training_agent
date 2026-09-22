@@ -1,0 +1,25 @@
+这是一个用于方便进行自动sft/rl训练并帮你分析问题并解决并且写进文档的框架。
+
+agent/model/role.md用于存放每个文件夹的作用。以及agent的流程指导（结合后面生成）
+
+我目前想到的大概流程就是在/agent文件夹里面有一个model文件夹，用于实现模型api的调用。目前使用deepseek的api接口吧。然后暴露这个api接口供其他代码使用。在/tools文件夹内包含且不限于cmd命令的输入工具，网页search工具等
+
+然后/data文件夹用于存放训练所需的data. 
+
+/frame文件夹 里面存放现有的合适的训练框架(比如llama-factory, swift等等。现在不必下载下来，只需要在文件夹下写清作用就行)。agent需要有能够根据数据还有训练要求搜索合适的训练框架的能力。搜索后下载到这个文件夹。
+
+/outputs文件夹，用于存放各类落盘输出。且明确outputs目录下紧接当前某次agentic_training运行开始时候的时间戳。格式参考2026_09_20_16:49。
+这个时间戳文件夹下存在三个文件夹：1./agent_logs是记录agent每次回复和调用action（tools）的详细流程。里面就维护一个文档，采用增量写入内容。agent_logs的格式应该保持「training_attempts_n(当前为此轮agentic_traing第n次启动training)」[模型回复时间戳]{action/response}+模型回复内容/cmd输出内容。 
+2. /training_logs应该记录当前agentic_training下每个training_attempts_n训练的logs。在当前agentic_training下不同training_attempts_n需要分开文件夹记录。并且每个/training_attempts_n文件夹下要包含俩文件夹/raw_log和/concise_logs。/raw_log文件夹用于详细增量落盘当次训练所有的terminal输出内容。而concise_logs只记录loss或者别的训练指标和epoch等的内容
+3. report内放最终agent输出的完整的关于这一整轮agentic_training的report。详细说明了训练轮次，平均训练epoch，以及每次训练的内容，每次训练之间修改了些啥，为何进行调整等训练细节。其中涉及代码更改的部分要提到报告最前优先report，并且加上醒目的#######强调
+
+/origin_model用于存放一开始所需要训练的那个模型
+
+/tmp存放训练过程中产生的无需落盘的不重要东西。依旧分时间戳文件夹保存。训练结束后删除
+
+/training_progress分时间戳保存training_attempts_n,在/training_attempts_n下保存训练产生的ckpt和outputs
+
+你先看我这个todo文档之后跟我聊天确认每个细节，给出详细方案在一个新的md文档
+
+
+

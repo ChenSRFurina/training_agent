@@ -1,6 +1,6 @@
 # Training Agent
 
-这是一个本地训练编排 MVP。当前版本先把数据验证、可审计规范化、风险审批和本地命令执行做成可靠闭环；框架 registry、自动下载和基于训练指标的多轮调整仍需在此基础上接入。
+这是一个本地训练编排 MVP。当前版本把数据验证、可审计规范化、框架 registry、固定版本归档下载、风险审批和基于训练指标的受限多轮执行接成一个闭环。
 
 ## 运行 dry-run
 
@@ -43,7 +43,27 @@ PYTHONPATH="$PWD" python -m training_agent.cli \
 --framework local --train-command "python train.py ..."
 ```
 
-后续接入具体训练框架时，应在 `frame/registry.py` 增加版本固定的适配器，而不是把命令直接拼接到 CLI 中。
+具体训练框架应在 registry 中以版本固定的命令模板登记，而不是把命令直接拼接到 CLI 中。
+
+## Registry、下载和自适应重试
+
+在 [frame/registry.yaml](/Users/cyril/code/code_sr/training_agent/training_agent/frame/registry.yaml) 注册框架后，可以使用命令模板替代 `--train-command`。模板使用 `${model_path}`、`${data_path}`、`${output_dir}`、`${framework_dir}` 和 `${attempt}` 占位符；每个参数必须在 `parameter_flags` 中登记，Agent 才能自动调整它。
+
+```bash
+PYTHONPATH="$PWD" python -m training_agent.cli \
+  --model-path ./training_agent/origin_model/model \
+  --data-path ./training_agent/data/train.jsonl \
+  --framework my_framework \
+  --registry-path ./training_agent/frame/registry.yaml \
+  --training-params '{"learning_rate": 0.0001, "batch_size": 8}' \
+  --adaptive-training \
+  --max-attempts 3 \
+  --high-risk-training=false
+```
+
+远程框架必须固定版本和 SHA-256。下载器会先下载到临时目录，校验后安全解压并原子安装；压缩包路径穿越、校验失败或审批拒绝都会终止运行。
+
+自适应策略目前只执行有限规则：OOM 时减半 `batch_size`，普通失败时减半 `learning_rate`。每轮调整写入 `adjustments/adjustment_n.json`，没有已登记参数 flag 时不会重复执行相同命令。
 
 ## 数据约束
 

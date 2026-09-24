@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -28,6 +29,11 @@ class Settings:
     checkpoint_path: Path | None = None
     require_checkpoint: bool = False
     resume: Path | None = None
+    registry_path: Path | None = None
+    framework_root: Path = Path("frame")
+    training_params: dict[str, object] = field(default_factory=dict)
+    adaptive_training: bool = False
+    target_loss: float | None = None
 
 
 def _bool(value: str) -> bool:
@@ -37,6 +43,16 @@ def _bool(value: str) -> bool:
     if value in {"0", "false", "no", "n", "off"}:
         return False
     raise argparse.ArgumentTypeError("expected true or false")
+
+
+def _json_object(value: str) -> dict[str, object]:
+    try:
+        result = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise argparse.ArgumentTypeError("expected a JSON object") from exc
+    if not isinstance(result, dict):
+        raise argparse.ArgumentTypeError("expected a JSON object")
+    return result
 
 
 def parse_args(argv: list[str] | None = None) -> Settings:
@@ -62,9 +78,16 @@ def parse_args(argv: list[str] | None = None) -> Settings:
     parser.add_argument("--checkpoint-path", type=Path, help="path to the expected final checkpoint")
     parser.add_argument("--require-checkpoint", action="store_true", help="fail if checkpoint-path is absent after a zero exit")
     parser.add_argument("--resume", type=Path, help="resume a previous run directory after verifying its input manifest")
+    parser.add_argument("--registry-path", type=Path, help="framework registry YAML path")
+    parser.add_argument("--framework-root", type=Path, default=Path("frame"), help="framework installation root")
+    parser.add_argument("--training-params", type=_json_object, default={}, help="initial framework parameters as a JSON object")
+    parser.add_argument("--adaptive-training", action="store_true", help="apply bounded metric-driven parameter changes between failed attempts")
+    parser.add_argument("--target-loss", type=float, help="continue adaptive attempts until the observed loss is at or below this value")
     ns = parser.parse_args(argv)
     if ns.max_attempts < 1 or ns.preview_rows < 1:
         parser.error("--max-attempts and --preview-rows must be positive")
     if ns.train_timeout is not None and ns.train_timeout < 1:
         parser.error("--train-timeout must be positive")
+    if ns.target_loss is not None and ns.target_loss < 0:
+        parser.error("--target-loss must be non-negative")
     return Settings(**vars(ns))

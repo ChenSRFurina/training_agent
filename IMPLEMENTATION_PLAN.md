@@ -269,6 +269,7 @@ ANALYZING → COMPLETED | FAILED | STOPPED
 - DeepSeek/OpenAI 兼容模型客户端、可选的结构化数据判断、模型建议操作白名单和本地确定性回退。
 - 独立进程组命令执行、实时 raw log、超时和子进程树清理。
 - loss、eval loss、epoch、step 和 learning rate 的结构化解析，以及 `observed`/`unverified`/`failed` 结果区分。
-- `local` 框架登记、风险审批、运行 manifest、训练报告和 13 个回归测试。
+- `local` 和 YAML registry 框架登记、远程归档下载/校验/安全解压、风险审批、运行 manifest、训练报告和 16 个回归测试。
+- 基于 OOM/失败指标的受限参数调整、调整证据文件和多 attempt 重试。
 
-以下能力仍明确未完成，不能在当前版本中声称已支持：具体训练框架的自动下载与适配、模型驱动的超参数调整、checkpoint 自动发现与恢复、`--resume` 断点续跑、RL 数据契约和多轮实验比较。
+以下能力仍明确未完成，不能在当前版本中声称已支持：具体第三方训练框架的内置适配器、模型驱动的超参数调整、checkpoint 自动发现与恢复、RL 数据契约和多轮实验比较。当前自动调整只允许 registry 中显式登记的参数 flag。

@@ -15,7 +15,9 @@ from .data_pipeline.schema import DataContract
 from .data_pipeline.transformer import transform_any
 from .hashing import sha256_file
 from .report import write_report
-from .frame.registry import select as select_framework
+from .frame.registry import build_command, select as select_framework
+from .frame.downloader import ensure_installed
+from .frame.adjustments import propose
 from .tools.approval import approve
 from .tools.command import run_command
 from .tools.metrics import analyze_metrics
@@ -30,12 +32,15 @@ def _judge_data(settings, preview: dict) -> dict:
 
 
 def _execute_training(context: RunContext, settings) -> int:
-    if not settings.train_command:
-        context.transition("FAILED")
-        write_report(context.output_dir, status="FAILED", reason="no --train-command was provided", attempts=[])
-        raise ValueError("real execution requires --train-command; use --dry-run for planning only")
-    framework = select_framework(settings.framework, settings.task, settings.train_command)
-    context.write_manifest(framework=framework.name, framework_version=framework.version)
+    framework = select_framework(settings.framework, settings.task, settings.train_command, settings.registry_path)
+    framework_dir = ensure_installed(framework, settings.framework_root, settings.high_risk_training, approve)
+    manifest = {}
+    manifest_path = context.output_dir / "manifest.json"
+    if manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    data_for_training = manifest.get("normalized_data_path", str(settings.data_path.resolve()))
+    parameters = dict(settings.training_params)
+    context.write_manifest(framework=framework.name, framework_version=framework.version, framework_dir=str(framework_dir.resolve()), training_params=parameters)
     context.transition("FRAMEWORK_READY")
     attempts: list[dict[str, object]] = []
     previous_summary = context.output_dir / "report" / "summary.json"
@@ -54,8 +59,16 @@ def _execute_training(context: RunContext, settings) -> int:
         context.attempt = number
         context.persist()
         raw, _ = context.attempt_dirs(number)
-        command = shlex.split(settings.train_command)
-        if not approve("启动训练命令: " + settings.train_command, settings.high_risk_training):
+        values = {
+            "model_path": settings.model_path.resolve(),
+            "data_path": data_for_training,
+            "output_dir": (context.progress_dir / f"training_attempts_{number}").resolve(),
+            "run_dir": context.output_dir.resolve(),
+            "framework_dir": framework_dir.resolve(),
+            "attempt": number,
+        }
+        command = build_command(framework, settings.train_command, values, parameters)
+        if not approve("启动训练命令: " + " ".join(shlex.quote(arg) for arg in command), settings.high_risk_training):
             context.agent_log.write("response", "training approval rejected", attempt=number)
             context.transition("STOPPED")
             write_report(context.output_dir, status="STOPPED", reason="training approval rejected", attempts=attempts)
@@ -74,6 +87,20 @@ def _execute_training(context: RunContext, settings) -> int:
             context.transition("FAILED")
             write_report(context.output_dir, status="FAILED", reason="training exited successfully but checkpoint verification failed", attempts=attempts)
             return 1
+        if returncode == 0 and settings.adaptive_training and settings.target_loss is not None and analysis.get("last_loss") is not None and float(analysis["last_loss"]) > settings.target_loss:
+            if number < settings.max_attempts:
+                adjustment = propose(analysis, parameters, framework.parameter_flags, settings.target_loss)
+                adjustment_path = context.output_dir / "adjustments" / f"adjustment_{number}.json"
+                adjustment_path.parent.mkdir(parents=True, exist_ok=True)
+                adjustment_path.write_text(json.dumps({"attempt": number, "applied": adjustment.applied, "changes": adjustment.changes, "reason": adjustment.reason, "evidence": adjustment.evidence}, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+                context.agent_log.write("action", "metric target adjustment proposed", attempt=number, applied=adjustment.applied, changes=adjustment.changes, reason=adjustment.reason)
+                if adjustment.applied:
+                    parameters.update(adjustment.changes)
+                    context.transition("ADJUSTING")
+                    continue
+            context.transition("FAILED")
+            write_report(context.output_dir, status="FAILED", reason=f"observed loss did not meet target {settings.target_loss}", attempts=attempts)
+            return 1
         if returncode == 0 and analysis["outcome"] == "unverified":
             context.transition("COMPLETED_UNVERIFIED")
             write_report(context.output_dir, status="COMPLETED_UNVERIFIED", reason="command exited successfully but metrics were insufficient to verify training", attempts=attempts)
@@ -82,8 +109,25 @@ def _execute_training(context: RunContext, settings) -> int:
             context.transition("COMPLETED")
             write_report(context.output_dir, status="COMPLETED", reason="training command exited successfully", attempts=attempts)
             return 0
-        context.transition("ANALYZING" if number < settings.max_attempts else "FAILED")
+        if number < settings.max_attempts and settings.adaptive_training:
+            adjustment = propose(analysis, parameters, framework.parameter_flags, settings.target_loss)
+            adjustment_path = context.output_dir / "adjustments" / f"adjustment_{number}.json"
+            adjustment_path.parent.mkdir(parents=True, exist_ok=True)
+            adjustment_path.write_text(json.dumps({"attempt": number, "applied": adjustment.applied, "changes": adjustment.changes, "reason": adjustment.reason, "evidence": adjustment.evidence}, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+            context.agent_log.write("action", "training adjustment proposed", attempt=number, applied=adjustment.applied, changes=adjustment.changes, reason=adjustment.reason)
+            if adjustment.applied:
+                parameters.update(adjustment.changes)
+                context.transition("ADJUSTING")
+                continue
+            context.transition("FAILED")
+            write_report(context.output_dir, status="FAILED", reason=f"no safe adaptive adjustment: {adjustment.reason}", attempts=attempts)
+            return 1
+        if number < settings.max_attempts:
+            context.transition("FAILED")
+            write_report(context.output_dir, status="FAILED", reason="training failed and adaptive training was disabled", attempts=attempts)
+            return 1
         if number == settings.max_attempts:
+            context.transition("FAILED")
             write_report(context.output_dir, status="FAILED", reason="training command failed and attempts were exhausted", attempts=attempts)
             exit_code = 1
     return exit_code
@@ -149,7 +193,7 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("normalized data failed validation; see normalized_full_scan.json")
     if settings.dry_run:
         if settings.framework or settings.train_command:
-            framework = select_framework(settings.framework, settings.task, settings.train_command)
+            framework = select_framework(settings.framework, settings.task, settings.train_command, settings.registry_path)
             context.write_manifest(framework=framework.name, framework_version=framework.version)
         context.transition("COMPLETED")
         write_report(context.output_dir, status="COMPLETED", reason="dry-run completed; no training was started", attempts=[])

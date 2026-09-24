@@ -1,2 +1,18 @@
 # Framework entries are intentionally explicit and version-pinned.
+# A command template is an argv list. It may use ${model_path}, ${data_path},
+# ${output_dir}, ${run_dir}, ${framework_dir}, and ${attempt}.
+# Remote entries must provide sha256 and an archive URL. They are downloaded
+# only after approval (or with --high-risk-training=true).
 frameworks: []
+
+# Example:
+# frameworks:
+#   - name: my_framework
+#     version: "1.2.3"
+#     tasks: [sft]
+#     source: https://example.invalid/my_framework-1.2.3.tar.gz
+#     sha256: "<64 hex characters>"
+#     command_template: [python, ${framework_dir}/train.py, --model, ${model_path}, --data, ${data_path}, --output_dir, ${output_dir}]
+#     parameter_flags:
+#       learning_rate: --learning_rate
+#       batch_size: --per_device_train_batch_size
